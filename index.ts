@@ -19,9 +19,36 @@ const vpc = new awsx.ec2.Vpc(`apollo-${env}`, {
 
 const privateVpcSubnets = vpc.privateSubnetIds;
 
-// Creates a role and attaches the EKS worker node IAM managed policies. Used a few times below,
-// to create multiple roles, so we use a function to avoid repeating ourselves.
-export function createRole(name: string): aws.iam.Role {
+
+function createEksClusterServiceRole(name: string): aws.iam.Role {
+  
+  const role = new aws.iam.Role(name, {
+    assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
+        Service: "eks.amazonaws.com",
+    }),
+  });
+
+  const managedPolicyArns: string[] = [
+    "arn:aws:iam::aws:policy/AmazonEKSServicePolicy",
+    "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+  ];
+
+  let counter = 0;
+  for (const policy of managedPolicyArns) {
+      // Create RolePolicyAttachment without returning it.
+      const rpa = new aws.iam.RolePolicyAttachment(`${name}-policy-${counter++}`,
+          { 
+            policyArn: policy, 
+            role: role 
+          },
+      );
+  }
+
+  return role;
+
+}
+
+function createEksNodeRole(name: string): aws.iam.Role {
   const role = new aws.iam.Role(name, {
       assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
           Service: "ec2.amazonaws.com",
@@ -32,6 +59,7 @@ export function createRole(name: string): aws.iam.Role {
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
     "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
     "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+    "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM",
   ];
 
   let counter = 0;
@@ -48,14 +76,17 @@ export function createRole(name: string): aws.iam.Role {
   return role;
 }
 
-const eksNodeRole = createRole("eksNodeRole");
+const eksServiceRole = createEksClusterServiceRole("eksServiceRole");
+const eksNodeRole = createEksNodeRole("eksNodeRole");
 const eksNodeInstanceProfile = new aws.iam.InstanceProfile("eksNodeInstanceProfile", {role: eksNodeRole});
 
 const eksCluster = new eks.Cluster(`apollo-${env}`, {
   version: "1.15",
   vpcId: vpc.id,
   privateSubnetIds: privateVpcSubnets,
+  deployDashboard: false,
   skipDefaultNodeGroup: true,
+  serviceRole: eksServiceRole,
   instanceRoles: [
     eksNodeRole,
   ],
@@ -83,6 +114,7 @@ const eksCluster = new eks.Cluster(`apollo-${env}`, {
     maxSize: 5,
     labels: {"role": "node"},
     instanceProfile: eksNodeInstanceProfile,
+    nodeUserData: "yum install -y 'https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm'"
   }, {
     providers: { kubernetes: eksCluster.provider},
   });
