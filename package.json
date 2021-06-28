@@ -1,7 +1,7 @@
 {
     "name": "infra-as-code",
     "devDependencies": {
-        "@types/node": "^8.0.0"
+        "@types/node": "^15.12.5"
     },
     "dependencies": {
         "@pulumi/aws": "^1.0.0",
